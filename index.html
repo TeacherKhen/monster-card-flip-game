@@ -545,5 +545,309 @@
         }
         initSetup();
     </script>
+    
+<!-- =====================================================
+     TEACHER KHEN COMMUNITY CONNECTOR
+     MONSTER BINGO - PIXEL UNO EDITION
+     ===================================================== -->
+
+<script>
+(() => {
+  'use strict';
+
+  // Activate only when launched by TeacherKhen Community.
+  if (
+    location.hash !== '#tk-community' ||
+    !window.opener
+  ) return;
+
+  const allowedOrigins = new Set([
+    'https://teacherkhen.com',
+    'https://www.teacherkhen.com'
+  ]);
+
+  const protocol = {
+    ready: 'TK_MONSTERBINGO_READY',
+    lesson: 'TK_MONSTERBINGO_LESSON',
+    loaded: 'TK_MONSTERBINGO_LOADED',
+    error: 'TK_MONSTERBINGO_ERROR'
+  };
+
+  let completed = false;
+  let receiving = false;
+  let attempts = 0;
+  let readyTimer = null;
+
+  function send(type, extra = {}, origin = null) {
+    if (!window.opener || window.opener.closed) return;
+
+    const message = { type, ...extra };
+
+    if (origin) {
+      window.opener.postMessage(message, origin);
+    } else {
+      allowedOrigins.forEach(target => {
+        window.opener.postMessage(message, target);
+      });
+    }
+  }
+
+  // Keep Community lessons in memory instead of
+  // replacing the teacher's existing localStorage data.
+  const originalSaveCurrentSetup = window.saveCurrentSetup;
+
+  window.saveCurrentSetup = function() {
+    customCards = getFormCards();
+    winScore = parseInt(
+      document.getElementById('winScoreInput').value,
+      10
+    ) || 5;
+
+    // No automatic localStorage writes in Community mode.
+  };
+
+  // Safely populate the existing 12-card editor.
+  // Original interface and gameplay remain unchanged.
+  window.initSetup = function() {
+    document.getElementById('winScoreInput').value = winScore;
+
+    const container =
+      document.getElementById('inputs-container');
+
+    container.replaceChildren();
+
+    for (let i = 0; i < 12; i++) {
+      const card = customCards[i] || {
+        img: '',
+        text: ''
+      };
+
+      const div = document.createElement('div');
+      div.className = 'setup-card-input';
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'del-img-btn';
+      remove.textContent = 'X';
+      remove.onclick = () => deleteImage(remove);
+
+      const preview = document.createElement('div');
+      preview.className = 'img-preview';
+
+      if (card.img) {
+        const image = document.createElement('img');
+        image.src = card.img;
+        image.alt = 'Vocabulary picture';
+        preview.appendChild(image);
+      } else {
+        preview.textContent = 'PASTE IMAGE';
+      }
+
+      const textInput = document.createElement('input');
+      textInput.type = 'text';
+      textInput.placeholder = '...';
+      textInput.className = 'card-text';
+      textInput.style.cssText =
+        'width:100%;text-align:center;';
+      textInput.value = card.text || '';
+      textInput.addEventListener(
+        'input',
+        () => saveCurrentSetup()
+      );
+
+      const imageInput = document.createElement('input');
+      imageInput.type = 'hidden';
+      imageInput.className = 'img-data';
+      imageInput.value = card.img || '';
+
+      div.append(
+        remove,
+        preview,
+        textInput,
+        imageInput
+      );
+
+      div.addEventListener('paste', handlePaste);
+      container.appendChild(div);
+    }
+  };
+
+  function validateLesson(incoming) {
+    if (
+      !incoming ||
+      typeof incoming !== 'object' ||
+      Array.isArray(incoming) ||
+      !Array.isArray(incoming.cards) ||
+      incoming.cards.length < 1 ||
+      incoming.cards.length > 12
+    ) {
+      throw new Error(
+        'Monster Bingo requires 1 to 12 cards.'
+      );
+    }
+
+    const cards = incoming.cards.map((card, index) => {
+      if (
+        !card ||
+        typeof card !== 'object' ||
+        Array.isArray(card) ||
+        typeof card.text !== 'string' ||
+        typeof card.img !== 'string' ||
+        (!card.text.trim() && !card.img.trim())
+      ) {
+        throw new Error(
+          'Invalid card at position ' + (index + 1)
+        );
+      }
+
+      if (
+        card.img &&
+        !(
+          /^data:image\/(png|jpeg|gif|webp);base64,/i
+            .test(card.img) ||
+          /^https:\/\//i.test(card.img)
+        )
+      ) {
+        throw new Error(
+          'Invalid image on card ' + (index + 1)
+        );
+      }
+
+      return {
+        img: card.img,
+        text: card.text
+      };
+    });
+
+    const score = Number(incoming.winScore);
+
+    if (
+      !Number.isInteger(score) ||
+      score < 1 ||
+      score > 1000
+    ) {
+      throw new Error(
+        'Invalid Monster Bingo winning score.'
+      );
+    }
+
+    return {
+      cards,
+      winScore: score
+    };
+  }
+
+  function applyLesson(incoming) {
+    const lesson = validateLesson(incoming);
+
+    // Restore Community vocabulary cards and pictures.
+    customCards = lesson.cards;
+    winScore = lesson.winScore;
+
+    // Reset current match progress.
+    scores = { a: 0, b: 0 };
+
+    document.getElementById('pts-a').textContent = '0';
+    document.getElementById('pts-b').textContent = '0';
+
+    document.getElementById('win-screen')
+      .style.display = 'none';
+
+    document.getElementById('instruction-overlay')
+      .style.display = 'none';
+
+    // Refresh the existing setup interface.
+    initSetup();
+
+    // Show settings, ready for the teacher to play.
+    document.getElementById('setup-overlay')
+      .style.display = 'flex';
+
+    // The original Play Now button starts the game.
+    // No data is written to localStorage.
+    return true;
+  }
+
+  // Receive the Community lesson.
+  window.addEventListener('message', event => {
+    if (
+      event.source !== window.opener ||
+      !allowedOrigins.has(event.origin) ||
+      completed ||
+      receiving ||
+      event.data?.type !== protocol.lesson
+    ) return;
+
+    receiving = true;
+
+    try {
+      applyLesson(event.data.lesson);
+
+      completed = true;
+      clearInterval(readyTimer);
+
+      send(protocol.loaded, {}, event.origin);
+
+      console.log(
+        'TeacherKhen Community: Monster Bingo loaded.'
+      );
+
+    } catch (error) {
+      receiving = false;
+
+      send(
+        protocol.error,
+        {
+          message: error?.message ||
+            'Unable to load Monster Bingo lesson.'
+        },
+        event.origin
+      );
+    }
+  });
+
+  function announceReady() {
+    if (
+      completed ||
+      receiving ||
+      !window.opener ||
+      window.opener.closed ||
+      attempts++ >= 90
+    ) {
+      clearInterval(readyTimer);
+      return;
+    }
+
+    send(protocol.ready);
+  }
+
+  function startConnector() {
+    announceReady();
+
+    if (!completed) {
+      readyTimer = setInterval(
+        announceReady,
+        1000
+      );
+    }
+  }
+
+  // Original initSetup() runs before this script.
+  // Wait for the page to finish initializing.
+  if (document.readyState === 'complete') {
+    startConnector();
+  } else {
+    window.addEventListener(
+      'load',
+      startConnector,
+      { once: true }
+    );
+  }
+
+})();
+</script>
+
+<!-- END MONSTER BINGO COMMUNITY CONNECTOR -->
+
 </body>
 </html>
